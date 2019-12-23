@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from client import GrammarClient
+from typing import List
 
 
 app = FastAPI()
-client = GrammarClient()
+client = GrammarClient(8080, 4000)
 
 
 class Input(BaseModel):
