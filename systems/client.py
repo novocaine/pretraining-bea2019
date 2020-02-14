@@ -14,29 +14,40 @@ MARIAN = "./tools/marian-dev/build"
 
 class GrammarClient:
     def __init__(self, port, batch_size):
-        self.ws = create_connection("ws://localhost:{}/translate".format(port))
+        self.port = port
         self.batch_size = batch_size
+        self.ws = self.create_ws()
+
+    def create_ws(self):            
+        return create_connection("ws://localhost:{}/translate".format(self.port))
+
+    def send_batch(self, batch):        
+        try:
+            self.ws.send(batch)
+        except (BrokenPipeError, IOError):
+            self.ws = self.create_ws()
+            self.ws.send(batch)
+        return self.ws.recv()
 
     def translate(self, input_strings):
         print("Calling server...", file=sys.stderr)
         output_strings = []
         count = 0
         batch = ""
-        for line in input_strings:
+        for line in input_strings:            
+            line += "\n"
             count += 1
             batch += line.decode('utf-8') if sys.version_info < (3, 0) else line
-            if count == args.batch_size:
+            if count == self.batch_size:
                 # translate the batch
-                self.ws.send(batch)
-                result = self.ws.recv()
-                output_strings.append(result)
+                result = self.send_batch(batch)
+                output_strings.append(result.rstrip())
                 count = 0
                 batch = ""
 
         if count:
             # translate the remaining sentences
-            self.ws.send(batch)
-            result = self.ws.recv()
+            result = self.send_batch(batch)
             output_strings.append(result.rstrip())
 
         print(output_strings, file=sys.stderr)
@@ -51,7 +62,7 @@ def rerank(output_prefix, model):
                                       "-c", f"{model}/rescore.ini",
                                       "-t", 
                                       "-n", "1.0"], stdin=nbest4, stdout=subprocess.PIPE)
-        return output_list.stdout.decode("utf-8").split("\n")
+        return output_list.stdout.decode("utf-8").split("\n")[:-1]
 
 
 def rescore(model, marian_args, input_strings, client_output):
@@ -59,8 +70,7 @@ def rescore(model, marian_args, input_strings, client_output):
 
     input_filename = "input." + str(uuid.uuid4())
     with open(input_filename, "w") as input_file:
-        for line in input_strings:
-            input_file.write(line)
+        input_file.write("\n".join(input_strings))
 
     output_prefix = "output." + str(uuid.uuid4())
     client_output_filename = output_prefix + ".nbest0"
@@ -82,18 +92,18 @@ def rescore(model, marian_args, input_strings, client_output):
                 "-t", input_filename,
                 output_filename,
                 "--log", output_filename + ".log"]
-            print(args)
             result = subprocess.run(args, check=True, stdout=subprocess.PIPE)
             with open(f"{output_prefix}.nbest{i}", "wb") as output_nbest:
                 output_nbest.write(result.stdout)
 
         return rerank(output_prefix, model)
     finally:
-        for i in range(1, 5):
-            try:
-                os.unlink(f"{output_prefix}.nbest{i}")
-            except:
-                pass
+        if False:
+            for i in range(1, 5):
+                try:
+                    os.unlink(f"{output_prefix}.nbest{i}")
+                except:
+                    pass
 
 
 def translate(client, input_strings, model, marian_args):
